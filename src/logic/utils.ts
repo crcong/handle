@@ -5,6 +5,7 @@ import type { MatchResult, ParsedChar } from './types'
 import { pinyin2zhuyin, pinyinInitials, toSimplified } from './lang'
 import { toShuangpin } from './lang/shuangpin'
 import type { InputMode } from '.'
+import { fullMatch } from '~/state'
 
 export function parsePinyin(pinyin: string, mode: InputMode = 'py') {
   let parts: string[] = []
@@ -61,6 +62,95 @@ export function parseWord(word: string, answer?: string, mode?: InputMode) {
 }
 
 export function testAnswer(input: ParsedChar[], answer: ParsedChar[]) {
+  if (fullMatch.value)
+    return _testAnswerByFullMatch(input, answer)
+
+  return _testAnswer(input, answer)
+}
+
+function includesAndRemove<T>(arr: T[], v: T) {
+  if (arr.includes(v)) {
+    arr.splice(arr.indexOf(v), 1)
+    return true
+  }
+  return false
+}
+
+export function _testAnswerByFullMatch(input: ParsedChar[], answer: ParsedChar[]) {
+  const matchMap = {
+    char: answer.map(a => a.char),
+    tone: answer.map(a => a.tone),
+    parts: answer.map(a => a.parts).flat(),
+  }
+  const result = [
+    { char: 'none', tone: 'none', _1: 'none', _2: 'none', _3: 'none' },
+    { char: 'none', tone: 'none', _1: 'none', _2: 'none', _3: 'none' },
+    { char: 'none', tone: 'none', _1: 'none', _2: 'none', _3: 'none' },
+    { char: 'none', tone: 'none', _1: 'none', _2: 'none', _3: 'none' },
+  ]
+  answer.forEach((a, i) => {
+    if (toSimplified(a.char) === toSimplified(input[i].char)) {
+      result[i].char = 'exact'
+      includesAndRemove(matchMap.char, a.char)
+    }
+    if (a.tone === input[i].tone) {
+      result[i].tone = 'exact'
+      includesAndRemove(matchMap.tone, a.tone)
+    }
+    if (a._1 === input[i]._1) {
+      result[i]._1 = 'exact'
+      includesAndRemove(matchMap.parts, a._1)
+    }
+    if (a._2 === input[i]._2) {
+      result[i]._2 = 'exact'
+      includesAndRemove(matchMap.parts, a._2)
+    }
+    if (a._3 === input[i]._3) {
+      result[i]._3 = 'exact'
+      includesAndRemove(matchMap.parts, a._3)
+    }
+  })
+  const matchWeight = input.map((i, index) => {
+    let w = 0
+    matchMap.char.includes(i.char) && w++
+    matchMap.tone.includes(i.tone) && w++
+    matchMap.parts.includes(i._1) && w++
+    matchMap.parts.includes(i._2 || '') && w++
+    matchMap.parts.includes(i._3 || '') && w++
+    return { ...i, _w: w, _i: index }
+  }).sort((a, b) => b._w - a._w)
+
+  function includesAndRemoveNotExact<T>(arr: T[], v: T, type: string) {
+    if (type === 'exact')
+      return false
+
+    if (arr.includes(v)) {
+      arr.splice(arr.indexOf(v), 1)
+      return true
+    }
+    return false
+  }
+
+  matchWeight.forEach((m) => {
+    if (includesAndRemoveNotExact(matchMap.char, m.char, result[m._i].char))
+      result[m._i].char = 'misplaced'
+
+    if (includesAndRemoveNotExact(matchMap.tone, m.tone, result[m._i].tone))
+      result[m._i].tone = 'misplaced'
+
+    if (includesAndRemoveNotExact(matchMap.parts, m._1, result[m._i]._1))
+      result[m._i]._1 = 'misplaced'
+
+    if (includesAndRemoveNotExact(matchMap.parts, m._2, result[m._i]._2))
+      result[m._i]._2 = 'misplaced'
+
+    if (includesAndRemoveNotExact(matchMap.parts, m._3, result[m._i]._3))
+      result[m._i]._3 = 'misplaced'
+  })
+  return result
+}
+
+export function _testAnswer(input: ParsedChar[], answer: ParsedChar[]) {
   const unmatched = {
     char: answer
       .map((a, i) => toSimplified(input[i].char) === toSimplified(a.char) ? undefined : toSimplified(a.char))
@@ -71,14 +161,6 @@ export function testAnswer(input: ParsedChar[], answer: ParsedChar[]) {
     parts: answer
       .flatMap((a, i) => a.parts.filter(p => !input[i].parts.includes(p)))
       .filter(i => i != null) as string[],
-  }
-
-  function includesAndRemove<T>(arr: T[], v: T) {
-    if (arr.includes(v)) {
-      arr.splice(arr.indexOf(v), 1)
-      return true
-    }
-    return false
   }
 
   return input.map((a, i): MatchResult => {
